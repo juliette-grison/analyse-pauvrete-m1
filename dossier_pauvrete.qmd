@@ -1,0 +1,1120 @@
+---
+title: "Analyse des données - Dossier"
+format: html
+editor: visual
+---
+
+# Packages utilisés
+
+```{r}
+library(readr)
+library(mice)
+library(dplyr)
+library(ggplot2)
+library(tidyverse)
+library(EnvStats)
+library(moments)
+library(kableExtra)
+library(PerformanceAnalytics)
+library(corrplot)
+library(lsr)
+library(FactoMineR)
+library(factoextra)
+library(nlme)
+library(leaps)
+library(stats)
+library(lmtest)
+library(car)
+library(broom)
+```
+
+# Import des données
+
+```{r}
+pauvrete <- read.csv("data/pauvrete.csv", row.names = 1)
+```
+
+# Conversion des données
+
+```{r}
+pauvrete$electricite <- as.factor(pauvrete$electricite)
+pauvrete$ide <- as.factor(pauvrete$ide)
+```
+
+# Traitement valeurs manquantes
+
+## Visualisation des valeurs manquantes
+
+```{r}
+naniar::gg_miss_upset(pauvrete, nsets = 12)
+
+# Nous pouvons voir qu'il manque 8 valeurs dans la variable corruption et 7 valeurs dans la variables des dépenses en éducation.
+```
+
+## Remplacement des valeurs manquantes
+
+```{r}
+set.seed(3)
+
+pauvrete_impute <- mice(pauvrete)
+pauvrete_impute$method
+
+# La méthode utilisée par la fonction mice est ici la méthode pmm.
+```
+
+```{r}
+plot(pauvrete_impute)
+```
+
+```{r}
+imputation1 <- mice::complete(pauvrete_impute, 1)
+imputation2 <- mice::complete(pauvrete_impute, 2)
+imputation3 <- mice::complete(pauvrete_impute, 3)
+imputation4 <- mice::complete(pauvrete_impute, 4)
+imputation5 <- mice::complete(pauvrete_impute, 5)
+```
+
+```{r}
+modele1 <- lm(pauvrete ~ pib + chomage + inflation + indice_gini + dep_educ + esp_vie + electricite + fertilite + pop_rurale + corruption + ide, data = imputation1)
+modele2 <- lm(pauvrete ~ pib + chomage + inflation + indice_gini + dep_educ + esp_vie + electricite + fertilite + pop_rurale + corruption + ide, data = imputation2)
+modele3 <- lm(pauvrete ~ pib + chomage + inflation + indice_gini + dep_educ + esp_vie + electricite + fertilite + pop_rurale + corruption + ide, data = imputation3)
+modele4 <- lm(pauvrete ~ pib + chomage + inflation + indice_gini + dep_educ + esp_vie + electricite + fertilite + pop_rurale + corruption + ide, data = imputation4)
+modele5 <- lm(pauvrete ~ pib + chomage + inflation + indice_gini + dep_educ + esp_vie + electricite + fertilite + pop_rurale + corruption + ide, data = imputation5)
+
+summary(modele1)
+summary(modele2)
+summary(modele3)
+summary(modele4)
+summary(modele5)
+```
+
+```{r}
+# Le R2 est le plus élevé pour le modèle 4, donc on va garder l'imputation 4.
+```
+
+```{r}
+pauvrete2 <- mice::complete(pauvrete_impute, 4)
+summary(pauvrete2)
+```
+
+# Analyse descriptive
+
+## Analyse descriptive univariée
+
+### Variables qualitatives
+
+```{r}
+variables_qualitatives <- c("electricite", "ide")
+```
+
+#### Diagrammes circulaires
+
+```{r}
+for (var_name in variables_qualitatives) {
+  
+  freq_table <- pauvrete2 |>
+    count(!!sym(var_name)) |>
+    mutate(pourcentage = n / sum(n) * 100)  
+  
+  p <- ggplot(freq_table, aes(x = "", y = pourcentage, fill = !!sym(var_name))) +
+    geom_bar(width = 1, stat = "identity") +
+    coord_polar("y") +
+    labs(title = paste("Diagramme circulaire de", var_name)) +
+    theme_void() +
+    theme(legend.title = element_blank()) +  
+    geom_text(aes(label = paste0(round(pourcentage, 1), "%")), 
+              position = position_stack(vjust = 0.5)) 
+  
+ # ggsave(
+  # filename = paste0("Diagramme_circulaire_", var_name, ".png"), 
+  # plot = p, 
+  # width = 8, height = 6, dpi = 300
+ #)
+  
+  print(p)
+}
+```
+
+### Variables quantitatives
+
+```{r}
+variables_quantitatives <- c("pauvrete", "pib", "chomage", "inflation", "indice_gini", "dep_educ", "esp_vie", "fertilite", "pop_rurale", "corruption")
+```
+
+#### Tableau de statistiques descriptives
+
+```{r}
+pauvrete2 |>
+  summarise(
+    across(
+      .cols = where(is.numeric),
+      .fns = list(
+        moyenne = ~ mean(.x, na.rm = TRUE),
+        médiane = ~ median(.x, na.rm = TRUE),
+        minimum = ~ min(.x, na.rm = TRUE),
+        maximum = ~ max(.x, na.rm = TRUE),
+        "écart-type" = ~ sd(.x, na.rm = TRUE)
+      ),
+      .names = "{.col} {.fn}" 
+    )
+  ) |>
+  pivot_longer(everything()) |>
+  separate_wider_delim(
+    name,
+    delim = " ", 
+    names = c("variable", "mesure")
+  ) |>
+  pivot_wider(names_from = mesure, values_from = value)
+```
+
+#### Box plot
+
+```{r}
+par(mfrow = c(1, 1))
+for (var in variables_quantitatives) {
+  boxplot(
+    pauvrete2[[var]], 
+    xlab = var, 
+    main = "", 
+    col = "lightblue"
+  )
+}
+# pop rurale 2
+# fertilite 7
+# dep_educ 3
+# indice_gini 2
+# inflation 5
+# chomage 3
+# pib 3
+# pauvrete 7
+```
+
+#### Vérification des valeurs atypiques
+
+```{r}
+rosnerTest(pauvrete2$pop_rurale, k = 2, alpha = 0.05)
+rosnerTest(pauvrete2$fertilite, k = 7, alpha = 0.05)
+rosnerTest(pauvrete2$dep_educ, k = 3, alpha = 0.05)
+rosnerTest(pauvrete2$indice_gini, k = 2, alpha = 0.05)
+rosnerTest(pauvrete2$inflation, k = 5, alpha = 0.05)
+rosnerTest(pauvrete2$pib, k = 3, alpha = 0.05)
+rosnerTest(pauvrete2$pauvrete, k = 7, alpha = 0.05)
+
+# 7 valeurs atypiques dans pauvrete --> lignes 48, 46, 64, 69, 30, 68, 26, 
+# 1 dans pib --> ligne 40, 
+# 5 dans inflation --> lignes 69, 32, 63, 48, 17 et 
+# 6 dans fertilite 64, 46, 47, 48, 68, 69, 
+# 12 observations atypiques en tout --> lignes 48, 46, 64, 69, 30, 68, 26, 40, 32, 63, 17, 47
+```
+
+#### Suppression des atypiques
+
+```{r}
+pauvrete2 <- pauvrete2[-c(48, 46, 64, 69, 30, 68, 26, 40, 32, 63, 17, 47), ]
+
+# Nous sommes donc maintenant à 57 observations.
+
+summary(pauvrete2)
+```
+
+#### Histogrammes
+
+```{r}
+par(mfrow = c(1, 1))
+for (var in variables_quantitatives) {
+  hist(
+    pauvrete2[[var]], 
+    xlab = var, 
+    main = "", 
+    col = "lightblue"
+  )
+}
+```
+
+### Skewness et kurtosis
+
+```{r}
+results <- data.frame(
+  Variable = variables_quantitatives,
+  Skewness = numeric(length(variables_quantitatives)),
+  Kurtosis = numeric(length(variables_quantitatives))
+)
+
+for (i in seq_along(variables_quantitatives)) {
+  var_name <- variables_quantitatives[i]
+  results$Skewness[i] <- skewness(pauvrete2[[var_name]], na.rm = TRUE)
+  results$Kurtosis[i] <- kurtosis(pauvrete2[[var_name]], na.rm = TRUE)
+}
+
+print(results)
+```
+
+```{r}
+results |>
+  kable(
+    format = "html",
+    col.names = c("Variable", "Skewness", "Kurtosis"),
+    caption = "Skewness et Kurtosis des variables quantitatives" 
+  ) |>
+  kable_styling(
+    full_width = FALSE,
+    bootstrap_options = c("striped", "hover", "condensed", "responsive")
+  ) |>
+  column_spec(1, bold = TRUE) |>
+  row_spec(0, bold = TRUE, background = "lightgrey") 
+```
+
+## Analyse descriptive bivariée
+
+### Quanti - Quanti
+
+#### Nuage de points
+
+```{r}
+ggplot(pauvrete2) + 
+   aes(x = pib, y = pauvrete)+ 
+   geom_point() +
+   geom_smooth(method = "lm", se = TRUE) +
+   theme_classic()
+
+ggplot(pauvrete2) + 
+   aes(x = chomage, y = pauvrete)+ 
+   geom_point() + 
+   geom_smooth(method = "lm", se = TRUE) +
+   theme_classic()
+
+ggplot(pauvrete2) + 
+   aes(x = inflation, y = pauvrete)+ 
+   geom_point() + 
+   geom_smooth(method = "lm", se = TRUE) +
+   theme_classic()
+
+ggplot(pauvrete2) + 
+   aes(x = indice_gini, y = pauvrete)+ 
+   geom_point() +
+   geom_smooth(method = "lm", se = TRUE) +
+   theme_classic()
+
+ggplot(pauvrete2) + 
+   aes(x = dep_educ, y = pauvrete)+ 
+   geom_point() +
+   geom_smooth(method = "lm", se = TRUE) +
+   theme_classic()
+
+ggplot(pauvrete2) + 
+   aes(x = esp_vie, y = pauvrete)+ 
+   geom_point() + 
+   geom_smooth(method = "lm", se = TRUE) +
+   theme_classic()
+
+ggplot(pauvrete2) + 
+   aes(x = fertilite, y = pauvrete)+ 
+   geom_point() +
+   geom_smooth(method = "lm", se = TRUE) +
+   theme_classic()
+
+ggplot(pauvrete2) + 
+   aes(x = pop_rurale, y = pauvrete)+ 
+   geom_point() +
+   geom_smooth(method = "lm", se = TRUE) +
+   theme_classic()
+
+ggplot(pauvrete2) + 
+   aes(x = corruption, y = pauvrete)+ 
+   geom_point() +
+   geom_smooth(method = "lm", se = TRUE) +
+   theme_classic()
+
+# En gris clair il y a l'intervalle de confiance.
+# Nous observons : 
+#   une corrélation négative entre pib et pauvrete, entre dep_educ et pauvrete, entre esp_vie et pauvrete
+#   une corrélation légèrement positive entre chomage et pauvrete, inflation et pauvrete,
+#   une corrélation positive entre indice_gini et pauvrete, entre fertilite et pauvrete, entre pop_rurale et pauvrete
+#   pas de corrélation particulière entre corruption et pauvrete
+```
+
+#### Corrélation de Spearman
+
+```{r}
+cor(pauvrete2[,c("pib", "chomage", "inflation", "indice_gini", "dep_educ", "fertilite", "pop_rurale", "corruption", "esp_vie")], use="complete.obs",method = c("spearman"))
+
+mydata <- pauvrete2[, c("pib", "chomage", "inflation", "indice_gini", "dep_educ", "fertilite", "pop_rurale", "corruption", "esp_vie")]
+chart.Correlation(mydata, histogram=TRUE, pch=19,method = c("spearman"))
+
+corr_mat=cor(mydata,method="s")
+corrplot(corr_mat, method = 'number',type="upper")
+
+corrplot(corr_mat,type="upper")
+
+# Nous constatons une corrélation très forte entre esp_vie et pib, et modérée à forte entre pop_rurale et pib (-0.58).
+```
+
+```{r}
+cor.test(pauvrete2$esp_vie, pauvrete2$pib)
+```
+
+### Quali - Quali
+
+#### Tableau de contingence
+
+```{r}
+mytable <- table(pauvrete2$electricite, pauvrete2$ide)
+# view(mytable)
+```
+
+#### Test du Khi-deux
+
+```{r}
+chisq.test(mytable)
+# p-value = 0.6471 > 0.05 => On ne peut pas rejeter H0, il n'y a donc pas de preuve statistiquement significative d'une association entre ces 2 variables, elles semblent indépendantes.
+```
+
+#### Cramer's V
+
+```{r}
+cramersV(mytable)
+
+# La corrélation de Cramer entre ces 2 variables est de 0.06, ce qui est très faible et montre encore une fois qu'il n'existe pas de lien entre ces variables.
+```
+
+## C. Quanti - Quali
+
+### Tests de comparaison de moyennes
+
+```{r}
+t.test(pauvrete ~ electricite, pauvrete2)
+t.test(pauvrete ~ ide, pauvrete2)
+
+# Il y a une différence significative entre les moyennes de pauvreté pour les deux groupes définis par la variable electricite. 
+# Pour les deux groupes définis par la variable ide, il y a aussi une différence significative entre les moyennes.
+
+# On a uniquement fait le test des moyennes sur Y car nous ne sommes pas dans un cadre expérimental avec des groupes de traitement et de contrôle. Ici, on cherche juste à modéliser la relation entre X et Y donc un test de comparaison de moyennes sur nos variables explicatives n'a pas de sens.
+```
+
+### Statistique êta carré
+
+#### a. electricite
+
+```{r}
+etaSquared(aov(pauvrete~electricite, pauvrete2))[1]
+etaSquared(aov(pib~electricite, pauvrete2))[1]
+etaSquared(aov(chomage~electricite, pauvrete2))[1]
+etaSquared(aov(inflation~electricite, pauvrete2))[1]
+etaSquared(aov(indice_gini~electricite, pauvrete2))[1]
+etaSquared(aov(dep_educ~electricite, pauvrete2))[1]
+etaSquared(aov(esp_vie~electricite, pauvrete2))[1]
+etaSquared(aov(fertilite~electricite, pauvrete2))[1]
+etaSquared(aov(pop_rurale~electricite, pauvrete2))[1]
+etaSquared(aov(corruption~electricite, pauvrete2))[1]
+```
+
+#### b. ide
+
+```{r}
+etaSquared(aov(pauvrete~ide, pauvrete2))[1]
+etaSquared(aov(pib~ide, pauvrete2))[1]
+etaSquared(aov(chomage~ide, pauvrete2))[1]
+etaSquared(aov(inflation~ide, pauvrete2))[1]
+etaSquared(aov(indice_gini~ide, pauvrete2))[1]
+etaSquared(aov(dep_educ~ide, pauvrete2))[1]
+etaSquared(aov(esp_vie~ide, pauvrete2))[1]
+etaSquared(aov(fertilite~ide, pauvrete2))[1]
+etaSquared(aov(pop_rurale~ide, pauvrete2))[1]
+etaSquared(aov(corruption~ide, pauvrete2))[1]
+```
+
+# ACP
+
+```{r}
+acp_1 <- pauvrete2 |>
+ select(- electricite, - ide) |>
+ PCA()
+```
+
+## Valeurs propres
+
+```{r}
+acp_1$eig
+```
+
+## Contribution des variables et correlations
+
+```{r}
+acp_1$var$contrib
+```
+
+```{r}
+acp_1$var$cor
+```
+
+# ACP log
+
+## ACP
+
+```{r}
+# D'abord, on transforme les variables du jeu de données en log, sauf pour les variables qualitatives et corruption et inflation, qui ont des valeurs négatives.
+
+pauvrete2_log <- pauvrete2 |>
+  mutate(across(-c(inflation, electricite, ide, indice_gini, corruption), log))
+
+acp_2 <- pauvrete2_log |>
+  select(-electricite, -ide) |>
+  PCA(scale.unit = TRUE)
+```
+
+## Visualisations
+
+### Dimensions 1 et 2
+
+```{r}
+# Visualisation des individus pour les dimensions 1 et 2
+fviz_pca_ind(acp_2,
+             axes = c(1, 2),
+             geom = "point", 
+             col.ind = "cos2", 
+             gradient.cols = c("lightblue", "seagreen", "darkblue"),
+             repel = TRUE,
+             ggtheme = theme_minimal()) +
+  geom_text(data = as.data.frame(acp_2$ind$coord), 
+            aes(x = Dim.1, y = Dim.2, label = rownames(acp_2$ind$coord)), 
+            size = 3, vjust = -0.5)
+```
+
+```{r}
+# Visualisation des variables pour les dimensions 1 et 2
+fviz_pca_var(acp_2,
+             axes = c(1, 2),
+             col.var = "contrib",
+             gradient.cols = c("lightblue", "seagreen", "darkblue"),
+             repel = TRUE, 
+             ggtheme = theme_minimal())
+```
+
+### Dimensions 3 et 4
+
+```{r}
+# Visualisation des individus pour les dimensions 3 et 4
+fviz_pca_ind(acp_2,
+             axes = c(3, 4),
+             geom = "point", 
+             col.ind = "cos2", 
+             gradient.cols = c("lightblue", "seagreen", "darkblue"),
+             repel = TRUE,
+             ggtheme = theme_minimal()) +
+  geom_text(data = as.data.frame(acp_2$ind$coord), 
+            aes(x = Dim.3, y = Dim.4, label = rownames(acp_2$ind$coord)), 
+            size = 3, vjust = -0.5)
+```
+
+```{r}
+# Visualisation des variables pour les dimensions 3 et 4
+fviz_pca_var(acp_2,
+             axes = c(3, 4),
+             col.var = "contrib",
+             gradient.cols = c("lightblue", "seagreen", "darkblue"),
+             repel = TRUE, 
+             ggtheme = theme_minimal())
+```
+
+## Valeurs propres
+
+```{r}
+acp_2$eig
+```
+
+## Contribution des variables et correlations
+
+```{r}
+acp_2$var$contrib
+```
+
+```{r}
+acp_2$var$cor
+```
+
+## Analyse des clusters
+
+### Dimensions 1 et 2
+
+#### Graphique de base
+
+```{r}
+mytypo_12 = HCPC(acp_2)
+gsummary(mytypo_12$data.clust, groups = mytypo_12$data.clust$clust)
+```
+
+#### 2ème graphique des clusters
+
+```{r}
+mytypo_12 <- HCPC(acp_2, nb.clust = 2, graph = FALSE)
+
+fviz_cluster(mytypo_12, 
+             ellipse.type = "convex",
+             legend = "right",
+             ggtheme = theme_classic()
+)
+
+gsummary(mytypo_12$data.clust, groups = mytypo_12$data.clust$clust)
+```
+
+#### Observations par cluster
+
+```{r}
+clusters <- mytypo_12$data.clust
+
+observations_cluster1 <- rownames(clusters[clusters$clust == 1, ])
+observations_cluster2 <- rownames(clusters[clusters$clust == 2, ])
+
+cat("Observations dans le Cluster 1 :\n", observations_cluster1, "\n")
+cat("Observations dans le Cluster 2 :\n", observations_cluster2, "\n")
+```
+
+#### Contribution aux clusters
+
+```{r}
+mytypo_12$desc.var$quanti.var
+```
+
+#### Anova
+
+```{r}
+anova <- list()
+
+for (var in variables_quantitatives) {
+  formule <- as.formula(paste(var, "~ clust"))
+  
+  test <- oneway.test(formule, data = mytypo_12$data.clust, var.equal = TRUE)
+  
+  anova[[var]] <- test
+}
+
+anova
+```
+
+#### Représentation graphique
+
+```{r}
+# Boxplot des variables pour lesquelles l'ANOVA est significatif, par cluster
+variables_12 <- c("pauvrete", "pib", "inflation", "indice_gini", "dep_educ", "esp_vie", "fertilite", "pop_rurale", "corruption")
+
+for (var in variables_12) {
+  p <- ggplot(mytypo_12$data.clust, aes(x = as.factor(clust), y = .data[[var]])) +
+    geom_boxplot(fill = c("lightblue1", "blue")) +
+    labs(title = paste("Distribution de", var, "par cluster"),
+         x = "Cluster", y = var) +
+    theme_minimal()
+  
+  print(p)
+}
+```
+
+### Dimensions 3 et 4
+
+```{r}
+acp_reduced <- acp_2
+acp_reduced$ind$coord <- acp_reduced$ind$coord[, 3:4]
+acp_reduced$var$coord <- acp_reduced$var$coord[3:4, ]
+acp_reduced$eig <- acp_reduced$eig[3:4, ]
+
+mytypo_34 <- HCPC(acp_reduced, nb.clust = 2, graph = FALSE)
+
+fviz_cluster(mytypo_34, 
+             ellipse.type = "convex", 
+             legend = "right", 
+             ggtheme = theme_classic()
+)
+
+gsummary(mytypo_34$data.clust, groups = mytypo_34$data.clust$clust)
+
+```
+
+#### Observations par cluster
+
+```{r}
+clusters <- mytypo_34$data.clust
+
+observations_cluster1 <- rownames(clusters[clusters$clust == 1, ])
+observations_cluster2 <- rownames(clusters[clusters$clust == 2, ])
+
+cat("Observations dans le Cluster 1 :\n", observations_cluster1, "\n")
+cat("Observations dans le Cluster 2 :\n", observations_cluster2, "\n")
+```
+
+#### Contribution aux clusters
+
+```{r}
+mytypo_34$desc.var$quanti.var
+```
+
+#### Anova
+
+```{r}
+anova <- list()
+
+for (var in variables_quantitatives) {
+  formule <- as.formula(paste(var, "~ clust"))
+  
+  test <- oneway.test(formule, data = mytypo_34$data.clust, var.equal = TRUE)
+  
+  anova[[var]] <- test
+}
+
+anova
+```
+
+#### Représentation graphique
+
+```{r}
+# Boxplot des variables pour lesquelles l'ANOVA est significatif, par cluster
+
+variables_34 <- c("dep_educ", "inflation", "pop_rurale", "fertilite")
+
+for (var in variables_34) {
+  p <- ggplot(mytypo_34$data.clust, aes(x = as.factor(clust), y = .data[[var]])) +
+    geom_boxplot(fill = c("lightblue1", "blue")) +
+    labs(title = paste("Distribution de", var, "par cluster"),
+         x = "Cluster", y = var) +
+    theme_minimal()
+  
+  print(p)
+}
+```
+
+# Estimations économétriques
+
+##1. Choix du meilleur modèle (STEP)
+
+### Step Forward
+
+```{r}
+modele0 <-lm(pauvrete ~ 1,data = pauvrete2)
+modele <-lm(pauvrete ~ pib + chomage + inflation + indice_gini + dep_educ + esp_vie + electricite + fertilite + pop_rurale+ corruption + ide, data = pauvrete2)
+
+#Forward selection
+step(modele0, scope = list(lower = modele0, upper = modele), data = pauvrete2, direction = "forward")
+
+#AIC le plus faible : 156.27
+#lm(formula = pauvrete ~ esp_vie + indice_gini + dep_educ + fertilite + chomage, data = pauvrete2)
+```
+
+### Step Backward
+
+```{r}
+#Backward selection
+step(modele, data = pauvrete2, direction = "backward")
+
+# Même résultat que le forward
+# 156.27
+# lm(formula = pauvrete ~ chomage + indice_gini + dep_educ + esp_vie + fertilite, data = pauvrete2)
+```
+
+### Stepwise
+
+```{r}
+step(modele0, scope = list(upper = modele),data = pauvrete2, direction = "both")
+
+# Même résultat
+# 156.27
+# lm(formula = pauvrete ~ esp_vie + indice_gini + dep_educ + fertilite + chomage, data = pauvrete2)
+```
+
+### Choix du modèle
+
+```{r}
+# Choix du modèle avec l'AIC le plus faible --> même résultat avec les 3 méthodes
+
+# Modèle final : 
+modelef <- lm(formula = pauvrete ~ esp_vie + indice_gini + dep_educ + fertilite + chomage, data = pauvrete2)
+
+summary(modelef)
+```
+
+## 2. Tests statistiques
+
+### a. Normalité des résidus
+
+```{r}
+# Test de Shapiro 
+ residus<-residuals(modelef)
+ shapiro.test(residus)
+ 
+# p-value < 0.05 => on refuse l'hypothèse de Normalité des résidus au seuil de risque de 5%, on devra donc modifier la forme fonctionnelle du modèle pour estimer un modèle semi-logarithmique
+```
+
+### b. Forme fonctionnelle
+
+```{r}
+# Reset test
+reset(modelef)
+# p-value = 0.003041 < 0.05 => On rejette H0 => La forme fonctionnelle linéaire du modèle spécifié n'est pas acceptée au seuil de 5%
+```
+
+### Changement de la forme fonctionnelle
+
+```{r}
+modelef_log <- lm(formula = log(pauvrete) ~ log(esp_vie) + log(indice_gini) + log(dep_educ) + log(fertilite) + chomage, data = pauvrete2)
+
+summary(modelef_log)
+
+# Après différents essais, cette forme est celle maximisant le R2 (R2 de 0.739 lorsqu'un log est appliqué à toutes les variables sauf au chomage).
+```
+
+```{r}
+# 2ème Reset test
+reset(modelef_log)
+# p-value = 0.1041 > 0.05 => On accepte H0 => La forme fonctionnelle linéaire du modèle spécifié est acceptée au seuil de 5%
+```
+
+### c. Absence de multicollinéarité
+
+```{r}
+vif(modelef_log)
+# VIF < 5 : Colinéarité faible (généralement acceptable).
+# Ici, tous les VIFS sont < 5 donc pas de colinéarité forte, on peut garder toutes ces variables dans le modèle
+```
+
+### d. Homoscédasticité des erreurs
+
+```{r}
+#Test de Breush Pagan
+bptest(modelef_log)
+#p-value = 0.145 > 0.05 => On ne rejette pas l’hypothèse d’homoscédacticité des résidus au seuil de risque de 5% => la variance des résidus semble constante à travers les observations
+# => Nous pourrons donc appliquer les résultats des MCO
+```
+
+### e. Distance de Cooks
+
+```{r}
+plot(cooks.distance(modelef_log),type="h")
+# On retrouvons quelques piques, mais ça reste en dessous de 1 (< 0.2 max) donc on peut les laisser --> même s'ils n'impactent pas de manière significative les résultats, ils impactent quand même plus que les autres observations
+```
+
+### f. Rééstimation du modèle après changement
+
+```{r}
+summary(modelef_log)
+
+# Nous avons donc un R2 final de 0.739, ce qui est élevé et indique un modèle de bonne qualité.
+```
+
+## Résultats de la régression
+
+```{r}
+results <- tidy(modelef_log)
+
+results <- results |> 
+  mutate(significance = case_when(
+    p.value < 0.001 ~ "***",
+    p.value < 0.01  ~ "**",
+    p.value < 0.05  ~ "*",
+    p.value < 0.1   ~ ".",
+    TRUE            ~ ""
+  ))
+results |> 
+  select(term, estimate, std.error, statistic, p.value, significance) |> 
+  kable(col.names = c("Variable", "Coefficient", "Erreur standard", 
+                      "t-value", "p-value", "Signif."), 
+        caption = "Résultats de la régression linéaire") |> 
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+# Régression à partir de l'ACP
+
+## 1. ACP sans pauvrete
+
+```{r}
+acp_3 <- pauvrete2_log |>
+  select(-pauvrete, -electricite, -ide) |>
+  PCA(scale.unit = TRUE)
+```
+
+### Valeurs propres, contributions et corrélations des variables
+
+```{r}
+acp_3$eig
+# D'après le critère de Kaiser, nous retiendrons donc les dimensions 1 à 4.
+
+acp_3$var$contrib
+
+acp_3$var$cor
+```
+
+### Régression
+
+```{r}
+dimensions <- as.data.frame(acp_3$ind$coord[, 1:4])
+
+dimensions$pauvrete <- pauvrete2_log$pauvrete
+dimensions$electricite <- pauvrete2_log$electricite
+dimensions$ide <- pauvrete2_log$ide
+dimensions$corruption <- pauvrete2_log$corruption
+
+modele_acp <- lm(pauvrete ~ Dim.1 + Dim.2 + Dim.3 + Dim.4 + electricite + ide, data = dimensions)
+
+summary(modele_acp)
+```
+
+## 2. Tests statistiques
+
+### a. Normalité des résidus
+
+```{r}
+# Test de Shapiro 
+ residus<-residuals(modele_acp)
+ shapiro.test(residus)
+ 
+# p-value = 0.06378 > 0.05 => on accepte l'hypothèse de Normalité des résidus au seuil de risque de 5%
+```
+
+### b. Forme fonctionnelle
+
+```{r}
+# Reset test
+reset(modele_acp)
+# p-value = 0.004592 < 0.05 => On rejette H0 => La forme fonctionnelle linéaire du modèle spécifié n'est pas acceptée au seuil de 5%
+```
+
+### Changement de la forme fonctionnelle
+
+```{r}
+modele_acp_2 <- lm(pauvrete ~ Dim.1 + Dim.2*electricite + Dim.3*Dim.4 + ide, data = dimensions)
+
+summary(modele_acp_2)
+```
+
+```{r}
+# 2ème Reset test
+reset(modele_acp_2)
+# p-value = 0.05812 > 0.05 => On accepte H0 => La forme fonctionnelle linéaire du modèle spécifié est acceptée au seuil de 5%
+```
+
+### c. Absence de multicollinéarité
+
+```{r}
+vif(modele_acp_2)
+# VIF < 5 : Colinéarité faible (généralement acceptable).
+# Ici, tous les VIFS sont < 5 donc pas de colinéarité forte, on peut garder toutes ces variables dans le modèle
+```
+
+### d. Homoscédasticité des erreurs
+
+```{r}
+#Test de Breush Pagan
+bptest(modele_acp_2)
+#p-value = 0.9544 > 0.05 => On ne rejette pas l’hypothèse d’homoscédacticité des résidus au seuil de risque de 5% => la variance des résidus semble constante à travers les observations
+# => Nous pourrons donc appliquer les résultats des MCO
+```
+
+### Rééstimation du modèle après changement
+
+```{r}
+summary(modele_acp_2)
+
+# Nous avons donc un R2 final de 0.8214, ce qui est très élevé et indique un modèle de bonne qualité.
+```
+
+## Résultats de la régression
+
+```{r}
+results <- tidy(modele_acp_2)
+
+results <- results |> 
+  mutate(significance = case_when(
+    p.value < 0.001 ~ "***",
+    p.value < 0.01  ~ "**",
+    p.value < 0.05  ~ "*",
+    p.value < 0.1   ~ ".",
+    TRUE            ~ ""
+  ))
+results |> 
+  select(term, estimate, std.error, statistic, p.value, significance) |> 
+  kable(col.names = c("Variable", "Coefficient", "Erreur standard", 
+                      "t-value", "p-value", "Signif."), 
+        caption = "Résultats de la régression linéaire") |> 
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+## Comparaison des modèles
+
+```{r}
+summary(modelef_log)
+summary(modele_acp_2)
+```
+
+```{r}
+AIC(modelef_log)
+AIC(modele_acp_2)
+```
+
+# Modèles Logit / Probit
+
+## Modèle Logit
+
+### Modèle de base
+
+```{r}
+modele_logit <- 
+  glm(electricite ~ pib + pauvrete + esp_vie + chomage + inflation + indice_gini + dep_educ + fertilite + pop_rurale + corruption + ide, data = pauvrete2, family = binomial(link = "logit"))
+
+summary(modele_logit)
+```
+
+### Step
+
+```{r}
+#Forward selection
+modele0_logit <- glm(electricite ~ 1,data = pauvrete2, family = binomial(link = "logit"))
+
+step(modele0_logit, scope = list(lower = modele0_logit, upper = modele_logit), data = pauvrete2, direction = "forward")
+
+# meilleur modèle AIC=24.38
+# electricite ~ indice_gini + pib + chomage + corruption
+```
+
+```{r}
+#Backward selection
+step(modele_logit, data = pauvrete2, direction = "backward")
+# meilleur modèle AIC=16
+# electricite ~ pib + pauvrete + chomage + indice_gini + dep_educ + fertilite + corruption
+```
+
+```{r}
+# stepwise
+step(modele0_logit, scope = list(upper = modele_logit),data = pauvrete2, direction = "both")
+# AIC = 24.38
+# electricite ~ indice_gini + pib + chomage + corruption
+```
+
+### Modèle final
+
+```{r}
+modelef_logit <- 
+  glm(electricite ~ pib + chomage + indice_gini + corruption, data = pauvrete2, family = binomial(link = "logit"), x = TRUE)
+
+summary(modelef_logit)
+
+# Coefficients de intercept, pib, et indice_gini significatifs au seuil de 5%
+# Coefficient de chomage significatif au seuil de 10% 
+# A part pour indice_gini qui est négatif, chaque variable augmente la probabilité d'avoir un taux d'electricité supérieur à 100%
+```
+
+```{r}
+vif(modelef_logit)
+# Tous < 5 donc pas de corrélation entre les différentes variables
+```
+
+### Intérêt du modèle (existence d'au moins une variable dont le coefficient est non nul)
+
+```{r}
+chi2<-2*(modelef_logit$null.deviance-modelef_logit$deviance)
+print(chi2)
+ddl<-modelef_logit$df.null-modelef_logit$df.residual # degré de liberté
+print(ddl)
+pvalue<-pchisq(chi2,ddl,lower.tail=F) # p value
+print(pvalue)
+
+# 116.3568 : deux fois la différence entre la null deviance et la residual deviance. La valeur du Khi calculé est de 116.36.
+
+# 4 : Le nombre de degré de liberté est de 5
+
+# 3.203376e-24 : p value inférieure à 1% donc on rejette au seuil de 1% l’hypothèse nulle, on rejette l’hypothèse que tous les coefficients sont nuls. La p-value étant inférieure à 0,05, on refuse l’hypothèse de nullité de l’ensemble des coefficients de variables explicatives du modèle. Il y a donc un intérêt à estimer ce modèle au seuil de 5 %
+```
+
+```{r}
+results_logit <- tidy(modelef_logit)
+
+results_logit <- results_logit |> 
+  mutate(significance = case_when(
+    p.value < 0.001 ~ "***",
+    p.value < 0.01  ~ "**",
+    p.value < 0.05  ~ "*",
+    p.value < 0.1   ~ ".",
+    TRUE            ~ ""
+  ))
+results_logit |> 
+  dplyr::select(term, estimate, std.error, statistic, p.value, significance) |> 
+  kable(col.names = c("Variable", "Coefficient", "Erreur standard", 
+                      "z-value", "p-value", "Signif."), 
+        caption = "Résultats de la régression logistique") |> 
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+### Effets marginaux moyens
+
+```{r}
+log_odds_logit <- stats::predict(modelef_logit, type = "link")
+
+density_logit <- dlogis(log_odds_logit)
+
+marginal_effects_logit <- mean(dlogis(log_odds_logit)) * coef(modelef_logit)
+
+print(marginal_effects_logit)
+```
+
+## Modèle Probit
+
+```{r}
+modelef_probit <- 
+  glm(electricite ~ pib + chomage + indice_gini + corruption, data = pauvrete2, family = binomial(link = "probit"), x = TRUE)
+
+summary(modelef_probit)
+```
+
+```{r}
+results_probit <- tidy(modelef_probit)
+
+results_probit <- results_probit |> 
+  mutate(significance = case_when(
+    p.value < 0.001 ~ "***",
+    p.value < 0.01  ~ "**",
+    p.value < 0.05  ~ "*",
+    p.value < 0.1   ~ ".",
+    TRUE            ~ ""
+  ))
+results_probit |> 
+  dplyr::select(term, estimate, std.error, statistic, p.value, significance) |> 
+  kable(col.names = c("Variable", "Coefficient", "Erreur standard", 
+                      "z-value", "p-value", "Signif."), 
+        caption = "Résultats de la régression probit") |> 
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+### Effets marginaux moyens
+
+```{r}
+log_odds_probit <- stats::predict(modelef_probit, type = "link")
+
+density_probit <- dlogis(log_odds_probit)
+
+marginal_effects_probit <- mean(dlogis(log_odds_probit)) * coef(modelef_probit)
+
+print(marginal_effects_probit)
+```
+
+## Comparaison entre les deux modèles
+
+### AIC / BIC
+
+```{r}
+AIC(modelef_logit, modelef_probit)
+BIC(modelef_logit, modelef_probit)
+```
+
+### Log-Likelihood
+
+```{r}
+logLik(modelef_logit)
+logLik(modelef_probit)
+```
+
+### Pseaudo R\^2
+
+```{r}
+R2_Mc_Fadden_logit <- 1 - (modelef_logit$deviance/modelef_logit$null.deviance)
+
+R2_Mc_Fadden_logit
+
+R2_Mc_Fadden_probit <- 1 - (modelef_probit$deviance/modelef_probit$null.deviance)
+
+R2_Mc_Fadden_probit
+```
